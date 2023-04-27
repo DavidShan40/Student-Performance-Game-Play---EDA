@@ -1,0 +1,316 @@
+---
+title: "Student Performance Game Play - EDA"
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+  pdf_document: 
+    latex_engine: lualatex
+---
+
+```{r}
+setwd('C:\\Users\\24937\\Downloads\\EDA')
+```
+```{r}
+df <- read.csv("subset_data.csv")
+head(df)
+```
+Dataset: A subset from the new Kaggle data competition. The dataset trace student learning from Jo Wilder online educational game. There are three question checkpoints (level 4, level 12, and level 22), each with a number of questions.
+
+# Question 1
+1) Describe and justify two different topics or approaches you might want to consider for this dataset and task. You don't have to use these tasks in the actual analysis. (Mandatory)
+
+The two topics I want to consider are: explaintory data analytics and Predicting modeling. Exploratory Data Analysis involves examining and summarizing the main characteristics of the dataset to gain potential insights and issues. I want to check the missing value, clean the missing and wrong data, make some plots to discover more information from this dataset such as using histograms, boxplot, scatterplots and correlation plot. 
+
+Predicting Modeling in this dataset identifying the level of the game, which helps the system to identify which level of the game the user is doing.
+
+
+# Question 2
+
+2) Describe and show the code used to clean and collect the data. (Optional)
+```{r}
+library(visdat)
+vis_miss(df)
+```
+I found the column "page" and "hover_duration" has lots of missing values, choose to delete these 2 columns. For other missing columns for room coordinates, it's not missing at random. Coordinates only exists when user has a clicking event. Also MICE imputation only works when missing at random. So I choose to delete the coordinate missing values.
+
+```{r}
+library(dplyr)
+
+df <- df%>%
+  select(-c(page, hover_duration))%>%
+  filter(complete.cases(.))
+head(df)
+```
+count number of unique variables
+```{r}
+n_distinct(df$session_id)
+n_distinct(df$index)
+n_distinct(df$event_name)
+n_distinct(df$name)
+n_distinct(df$fqid)
+n_distinct(df$room_fqid)
+n_distinct(df$text_fqid)
+n_distinct(df$level_group)
+```
+This dataset totally has 15000 samples. For very large number of unique values, we need to encoding them using frequency encoder. Also delete index because of too large unique number of values.
+
+```{r}
+df <- df%>%
+  select(-c(index, text))
+```
+
+```{r}
+# Define a frequency encoder function
+frequency_encoder <- function(data, column) {
+  freq_table <- data %>% 
+    group_by(!!sym(column)) %>% 
+    summarise(Frequency = n()) %>% 
+    mutate(Frequency = Frequency / sum(Frequency))
+
+  encoded_data <- data %>% 
+    left_join(freq_table, by = column) %>% 
+    select(-!!sym(column)) %>% 
+    rename(!!paste0(column, "_freq") := Frequency)
+
+  return(encoded_data)
+}
+
+for (col in c('session_id','fqid','room_fqid','text_fqid')){
+  df <- frequency_encoder(df, col)
+}
+head(df)
+```
+Min-max Scaler for numeric columns
+```{r}
+min_max_scaler <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+df <- df %>% 
+  mutate_if(is.numeric, min_max_scaler)
+head(df)
+```
+3) Give a ggpairs plot of what you think are the six most important variables. At least one must be categorical, and one continuous. Explain your choice of variables and the trends between them. (Mandatory)
+
+The most important variables are elapsed_time, event_name, name, session_id_freq, fqid_freq and level_group. Here are the reasons:
+
+* elapsed_time - how much time has passed (in milliseconds) between the start of the session and when the event was recorded. This shows the time of user's action and it's important for the analysis.
+* event_name - the name of the event type, which shows the player has what kind of actions such as differet type of click
+* name - the event name (e.g. identifies whether a notebook_click is is opening or closing the notebook)
+* session_id_freq - freq means the frequency encoding. The session_id shows the ID of the session the event took place in, which identify different sections.
+* fqid_freq - freq means the frequency encoding. fqid - the fully qualified ID of the event.
+* level_group - shows which group of levels - and group of questions - this row belongs to (0-4, 5-12, 13-22) This help us to identify the level of each question.
+
+```{r}
+library(GGally)
+# ggpairs(df%>%select(c(elapsed_time, event_name, name, session_id_freq, fqid_freq, level_group)))
+
+# rotate x labels
+rotate_x_labels <- function(plot) {
+  plot + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+}
+
+# rotate y labels
+rotate_y_labels <- function(plot) {
+  plot + theme(axis.text.y = element_text(angle = 45, vjust = 0.5, hjust = 1))
+}
+
+selected_columns = df%>%select(c(elapsed_time, event_name, name, session_id_freq, fqid_freq, level_group))
+ggpairs(
+  selected_columns,
+  lower = list(continuous = wrap(ggally_points, alpha = 0.5)),
+  upper = list(continuous = wrap(ggally_cor, size = 4, color = "blue")),
+  diag = list(continuous = wrap(ggally_densityDiag, fill = "blue", alpha = 0.5))
+) +
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_text(angle = 45, vjust = 0.5, hjust = 1),
+    axis.text.y = ggplot2::element_text(angle = 45, vjust = 0.5, hjust = 1)
+  )
+```
+
+The plot shows different dimension of the data, such as boxplot shows the outliers, correlation shows the linear relationships, histogram shows the categorical data's distribution. The session_id_freq has high correlation with elapsed time which is 0.625. Fqid_freq has low correlation with elapsed_time which equals to 0.051, and its correlation with session_id_freq is 0.037. For all the plots in diagonal, contains histograms or density plots representing the distribution of each variable. The histogram for name shows most of the labels are from basic and undefined. The histogram of level_group also shows the number of groups are close to each other. The density plot for elapsed_time shows the positive skewness of the time. Most frequency between 0 - 0.25. Also the trend for column fqid_freq shows x value between 0.25 to 0.75 does not have many samples.
+
+# Question 4
+4) Build a classification tree of one of the six variables from the last part as a function of the other five, and any other explanatory variables you think are necessary. Show code, explain reasoning, and show the tree as a simple (ugly) plot. Show the confusion matrix. Give two example predictions and follow them down the tree. (Mandatory)
+
+```{r}
+library(rpart)
+library(rpart.plot)
+```
+split train and test, 80% as train and 20% as test
+```{r}
+library(caret)
+set.seed(42)
+train_index <- createDataPartition(df$level_group, p = 0.8, list = FALSE)
+train_data <- df[train_index,]
+test_data <- df[-train_index,]
+```
+
+fit and plot the tree
+```{r}
+tree_model <- rpart(level_group ~ elapsed_time + event_name + name + session_id_freq + fqid_freq, data = train_data, method = "class", control = rpart.control(cp = 0.01))
+rpart.plot(tree_model, extra = 1, under = TRUE, cex = 0.8)
+```
+I use rpart package to build the tree, and use rpart.plot to plot the tree. For the tree, the parameter cp, complexity parameter controls the size of the tree. Small value for cp will grow a large tree, and a large value of cp will grow a small tree. The tree plot shows how the model made its prediction. 
+
+plot the confusion matrix
+```{r}
+predictions <- predict(tree_model, test_data, type = "class")
+confusion_mtx <- confusionMatrix(predictions, factor(test_data$level_group))
+print(confusion_mtx)
+```
+The confusion matrix shows a great accuracy = 0.92 for the above prediction. for each class, I found the prediction accuracy of class: 13-22 has the best accuracy of 0.9691, and the worst prediction accuracy of class: 5-12 has accuracy of 0.9090. The better the accuracy, the better the model making the decisions.
+
+From confidence interval, the model is 95% confident that the true accuracy is between 0.9117 and 0.9322.
+
+For no information rate, which shows 0.3493 of the instances belong to the largest class.
+
+For p value, since it's very small, we can reject the null hypothesis and conclude that the model's accuracy is significantly better than the no information rate
+
+
+```{r}
+set.seed(42)
+example_data <- test_data[sample(1:nrow(test_data), 2),]%>%select(c(elapsed_time, event_name, name, session_id_freq, fqid_freq, level_group))
+example_predictions <- predict(tree_model, example_data, type = "class")
+print(example_data)
+print(example_predictions)
+```
+Let me conclude how the tree make its prediction. First, test if elapsed time < 0.2. both of them are larger than this value and go to the right. Then test if session_id_freq >= 0.4. Both of then are larger, so go to the left. Then the prediction is made, both of them are predict to level_group 13-22, and they are all correct.
+
+# Question 5
+5) Build a visually impressive ggplot to show the relationship between at least three variables. (Optional)
+```{r}
+library(ggplot2)
+library(dplyr)
+
+ggplot(df, aes(x = session_id_freq, y = elapsed_time, color = level_group)) +
+  geom_point(alpha = 0.6, size = 2.5) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Relationship for Session ID, Elapsed Time, and Level Group",
+       x = "Session ID",
+       y = "Elapsed Time",
+       color = "Level Group") +
+  theme_minimal() +
+  theme(text = element_text(size = 13),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        legend.title = element_text(face = "bold"))
+```
+I plot the session ID as X axis, elapsed time as y axis and color by level group. For Elapsed time, the lower the time is, the lower the group is. 
+
+# Question 6
+6) Build another model using one of the continuous variables from your six most important. This time use your model selection and dimension reduction tools, and include at least one non-linear term. (Mandatory)
+
+Prepare the data
+```{r}
+train_data = train_data%>%select(c(elapsed_time, event_name, name, session_id_freq, fqid_freq, level_group))
+test_data = test_data%>%select(c(elapsed_time, event_name, name, session_id_freq, fqid_freq, level_group))
+```
+
+Dimensional Reduction
+```{r}
+numeric_columns <- sapply(train_data, is.numeric)
+numeric_train_data <- train_data[, numeric_columns]
+pca <- prcomp(numeric_train_data, scale = TRUE)
+eigs <- pca$sdev^2
+for (i in 1:length(eigs)){
+  print(paste("Explained Variance Ratio for",i,"variable", eigs[i] / sum(eigs)))
+}
+```
+The PCA is applied on all numeric columns. I calculate the explained variance ratio by the eigen value output by PCA. The first two columns output from PCA explained 87.5% of data.So I choose these two columns and add to my prediction model.
+
+```{r}
+train_pca <- predict(pca, train_data)
+test_pca <- predict(pca, test_data)
+train_data$PC1 <- train_pca[,1]
+train_data$PC2 <- train_pca[,2]
+test_data$PC1 <- test_pca[,1]
+test_data$PC2 <- test_pca[,2]
+head(train_data)
+```
+
+Add non-linear term, according to the skewness result
+```{r}
+library(e1071)
+skewness(train_data$elapsed_time)
+```
+```{r}
+skewness(train_data$elapsed_time ^ 0.5)
+```
+From the skewness value, we found the skewness is 1.472323 for elapsed_time, which means the column is positively skewed. By apply the non-linear term square root for this column, the column's skewness decrease to 0.59, which is better than before.
+
+for elapsed_time use square root
+
+```{r}
+train_data$elapsed_time  =  train_data$elapsed_time ^ 0.5
+test_data$elapsed_time  =  test_data$elapsed_time ^ 0.5
+```
+
+Lasso regression, model selection with the best lambda
+```{r}
+X_train = train_data[,2:ncol(train_data)]
+y_train = train_data$elapsed_time
+X_test = test_data[,2:ncol(test_data)]
+y_test = test_data$elapsed_time
+```
+
+```{r}
+library(glmnet)
+library(MASS)
+library(Matrix)
+combined_data <- rbind(X_train, X_test)
+combined_data$is_train <- c(rep(TRUE, nrow(X_train)), rep(FALSE, nrow(X_test)))
+combined_matrix <- model.matrix(~ . - 1 - is_train, data = combined_data)
+X_train_matrix <- combined_matrix[combined_data$is_train,]
+X_test_matrix <- combined_matrix[!combined_data$is_train,]
+cvfit <- cv.glmnet(X_train_matrix, y_train, alpha = 1, nfolds = 5)
+best_lambda <- cvfit$lambda.min
+best_lambda
+```
+The best subset selection selected the best lambda value. I use lambda.min, which is the optimal value of the regularization parameter lambda that minimizes the mean cross-validated error in lasso regression. The plot below visualize the result and the solution is lambda = 0.00024.
+
+```{r}
+plot(cvfit)
+abline(v = log(cvfit$lambda.min), col = "red", lwd = 2, lty = 2)
+legend("topright", legend = c("Lambda.min"), col = "red", lwd = 2, lty = 2)
+```
+Use the best lambda on the model
+```{r}
+model <- glmnet(X_train_matrix, y_train, alpha = 1, lambda = best_lambda)
+predictions <- predict(model, newx = X_test_matrix)
+mse <- mean((y_test^2 - predictions^2)^2)
+print(paste("Mean Squared Error:", mse))
+```
+The mean squared error is 0.0007, which is very small. It is because of this numeric column already applied min-max scaler at the beginning of data pre-processing. Other than this, the error rate still shows a great performance of the regression model.
+
+Interpret the model:
+```{r}
+model_coefficients <- coef(model, s = best_lambda)
+print(model_coefficients)
+```
+```{r}
+non_zero_coefficients <- sum(model_coefficients != 0)
+cat("Number of non-zero coefficients:", non_zero_coefficients, "\n")
+```
+The model selected 14 variables as its output. (one for its intercept) The zero intercepts above shows the model's varaible selections. From the result of coefficients, the model gives more weights to session_id_freq and PC1. (since the data already used min-max scaler)
+
+# Question 7
+Discuss briefly the steps you would take to make sure your analysis is reproducible and easy to evaluate by others, even if the data is updated later. (Option)
+
+The reproducible analysis should have a great documentation, well orgaized code, reproduceable data pre-processing. In my code I have comments to explain each part of the code. Also the code is clean and easy to read. When there is further similar data to my analysis, it's easy to run the code again for the new version of data for the same pre-processing steps. My current data was selected from a small subset of a Kaggle's dataset,(totally more than 10 million records in the original dataframe) and I'm sure more data is runnable in this notebook, but need to consider the running time, RAM and GPU for the large dataset.
+
+# Question 8
+Discuss briefly any ethical concerns like residual disclosure that might arise from the use of your data set, possibly in combination with some additional data outside your dataset. (Option)
+
+My dataset has columns including "event_name", "name", "session_id_freq", "fqid_freq", "level_group" and elapsed_time in the analysis above. The problem of ethical concerns might arise when the dataset contains personal information, then the data is not safe. Such as if there is person's name, then combining it with other publicly available data sources like social media profiles or other online information can lead to the identification of individuals in the dataset. 
+
+Fr my dataset this does not happened. The full dataset does not contain any person's information, only contains the action when the user is using the online education game.
+
+Reference: https://www.kaggle.com/competitions/predict-student-performance-from-game-play/data
+
+
+
+
+
+
+
+
